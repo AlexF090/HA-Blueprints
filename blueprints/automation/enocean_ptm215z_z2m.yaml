@@ -1,0 +1,690 @@
+blueprint:
+  homeassistant:
+    min_version: 2024.10.0
+  name: EnOcean PTM 215Z - Z2M 2.x (MQTT Device Trigger) v2
+  description: |
+    Automation for the **EnOcean PTM 215Z** via **MQTT Device Trigger** (Z2M >= 2.0).
+
+    **How it works:**
+    - Short press: Release arrives within Hold Delay -> short press action
+    - Long press: No Release within Hold Delay -> held action (once or repeating)
+    - Released: Triggers only after a real long press (not on packet loss)
+
+    **Prerequisite:** Press each button once manually so Z2M registers it as
+    a Device Trigger in HA. MQTT Discovery must be enabled (default).
+
+    Supported: Single buttons 1-4, combinations 1+3 / 2+4 / 1+4 / 2+3
+
+    Version 2026.03.18 - v2 (Repeat-loop fix, clean held sequence)
+
+  domain: automation
+
+  input:
+    zigbee_device:
+      name: PTM 215Z device
+      description: Select the device from the MQTT integration.
+      selector:
+        device:
+          integration: mqtt
+
+    settings_section:
+      name: Settings
+      icon: mdi:cog-outline
+      collapsed: true
+      input:
+        hold_delay:
+          name: Hold Delay
+          description: >
+            Hold time in ms until a button is considered 'held'.
+            Released faster -> short press.
+          default: 500
+          selector:
+            number:
+              min: 100
+              max: 1000
+              unit_of_measurement: milliseconds
+              mode: box
+              step: 10
+
+        hold_repeat_delay:
+          name: Hold Repeat Delay
+          description: >
+            Time between repeated held actions (e.g. for dimming).
+            0 = held action is triggered only once.
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 2000
+              unit_of_measurement: milliseconds
+              mode: box
+              step: 50
+
+        hold_max_duration:
+          name: Max. Hold Duration
+          description: >
+            Maximum hold time in seconds as a safety stop.
+            Prevents endless held actions if the release packet is lost.
+          default: 10
+          selector:
+            number:
+              min: 2
+              max: 30
+              unit_of_measurement: seconds
+              mode: slider
+              step: 1
+
+    ptm215z_actions:
+      name: PTM215Z - Single buttons
+      icon: mdi:gesture-tap
+      collapsed: true
+      input:
+        button_1_pressed:
+          name: Button 1 - Short press
+          default: []
+          selector: { action: {} }
+        button_1_held:
+          name: Button 1 - Held
+          default: []
+          selector: { action: {} }
+        button_1_released:
+          name: Button 1 - Released (after long press)
+          default: []
+          selector: { action: {} }
+
+        button_2_pressed:
+          name: Button 2 - Short press
+          default: []
+          selector: { action: {} }
+        button_2_held:
+          name: Button 2 - Held
+          default: []
+          selector: { action: {} }
+        button_2_released:
+          name: Button 2 - Released (after long press)
+          default: []
+          selector: { action: {} }
+
+        button_3_pressed:
+          name: Button 3 - Short press
+          default: []
+          selector: { action: {} }
+        button_3_held:
+          name: Button 3 - Held
+          default: []
+          selector: { action: {} }
+        button_3_released:
+          name: Button 3 - Released (after long press)
+          default: []
+          selector: { action: {} }
+
+        button_4_pressed:
+          name: Button 4 - Short press
+          default: []
+          selector: { action: {} }
+        button_4_held:
+          name: Button 4 - Held
+          default: []
+          selector: { action: {} }
+        button_4_released:
+          name: Button 4 - Released (after long press)
+          default: []
+          selector: { action: {} }
+
+    ptm215z_combo_actions:
+      name: PTM215Z - Combination actions
+      icon: mdi:gesture-two-tap
+      collapsed: true
+      input:
+        button_1_and_3_pressed:
+          name: Buttons 1+3 - Short press
+          default: []
+          selector: { action: {} }
+        button_1_and_3_held:
+          name: Buttons 1+3 - Held
+          default: []
+          selector: { action: {} }
+        button_1_and_3_released:
+          name: Buttons 1+3 - Released (after long press)
+          default: []
+          selector: { action: {} }
+
+        button_2_and_4_pressed:
+          name: Buttons 2+4 - Short press
+          default: []
+          selector: { action: {} }
+        button_2_and_4_held:
+          name: Buttons 2+4 - Held
+          default: []
+          selector: { action: {} }
+        button_2_and_4_released:
+          name: Buttons 2+4 - Released (after long press)
+          default: []
+          selector: { action: {} }
+
+        button_1_and_4_pressed:
+          name: Buttons 1+4 - Short press
+          default: []
+          selector: { action: {} }
+        button_1_and_4_held:
+          name: Buttons 1+4 - Held
+          default: []
+          selector: { action: {} }
+        button_1_and_4_released:
+          name: Buttons 1+4 - Released (after long press)
+          default: []
+          selector: { action: {} }
+
+        button_2_and_3_pressed:
+          name: Buttons 2+3 - Short press
+          default: []
+          selector: { action: {} }
+        button_2_and_3_held:
+          name: Buttons 2+3 - Held
+          default: []
+          selector: { action: {} }
+        button_2_and_3_released:
+          name: Buttons 2+3 - Released (after long press)
+          default: []
+          selector: { action: {} }
+
+# --- MODE -------------------------------------------------------------------
+# single: Hold loop continues; further triggers are ignored.
+# Correct - the PTM215Z always sends only one action at a time.
+mode: single
+max_exceeded: silent
+
+variables:
+  hold_delay: !input hold_delay
+  hold_repeat_delay: !input hold_repeat_delay
+  hold_max_duration: !input hold_max_duration
+
+# --- TRIGGER ----------------------------------------------------------------
+# Use only press_* as triggers. Release is intercepted internally via wait_for_trigger.
+# -> No double-fire, no /action-subtopic issue.
+triggers:
+  - trigger: device
+    device_id: !input zigbee_device
+    domain: mqtt
+    type: action
+    subtype: press_1
+    id: press_1
+  - trigger: device
+    device_id: !input zigbee_device
+    domain: mqtt
+    type: action
+    subtype: press_2
+    id: press_2
+  - trigger: device
+    device_id: !input zigbee_device
+    domain: mqtt
+    type: action
+    subtype: press_3
+    id: press_3
+  - trigger: device
+    device_id: !input zigbee_device
+    domain: mqtt
+    type: action
+    subtype: press_4
+    id: press_4
+  - trigger: device
+    device_id: !input zigbee_device
+    domain: mqtt
+    type: action
+    subtype: press_1_and_3
+    id: press_1_and_3
+  - trigger: device
+    device_id: !input zigbee_device
+    domain: mqtt
+    type: action
+    subtype: press_2_and_4
+    id: press_2_and_4
+  - trigger: device
+    device_id: !input zigbee_device
+    domain: mqtt
+    type: action
+    subtype: press_1_and_4
+    id: press_1_and_4
+  - trigger: device
+    device_id: !input zigbee_device
+    domain: mqtt
+    type: action
+    subtype: press_2_and_3
+    id: press_2_and_3
+
+# --- ACTIONS ----------------------------------------------------------------
+# Flow:
+#   1. Wait for Release (timeout = hold_delay)
+#   2a. Release in time -> short press action, done
+#   2b. Timeout -> long press:
+#       Path A (hold_repeat_delay = 0):
+#         -> Held once -> wait for Release (hard limit) -> Released
+#       Path B (hold_repeat_delay > 0):
+#         -> Repeat: Held -> wait hold_repeat_delay -> Held -> ...
+#         -> Loop ends on Release or hard limit -> Released (only on real release)
+#
+# FIX v2: Held triggers correctly once per repeat iteration (not twice).
+# The loop starts with wait_for_trigger, not with the action - so the cadence
+# is cleanly timed via hold_repeat_delay.
+
+actions:
+  - choose:
+      # ════════════════════════════════════════════════════════════════════════
+      # BUTTON 1
+      # ════════════════════════════════════════════════════════════════════════
+      - conditions: [{ condition: trigger, id: press_1 }]
+        sequence:
+          - wait_for_trigger:
+              - trigger: device
+                device_id: !input zigbee_device
+                domain: mqtt
+                type: action
+                subtype: release_1
+            timeout:
+              milliseconds: "{{ hold_delay }}"
+            continue_on_timeout: true
+          - choose:
+              # --- Short press -------------------------------------------------
+              - conditions: "{{ wait.trigger is not none }}"
+                sequence: !input button_1_pressed
+              # --- Long press --------------------------------------------------
+              - conditions: "{{ wait.trigger is none }}"
+                sequence:
+                  # Path A: one-time held action
+                  - if: "{{ hold_repeat_delay | int == 0 }}"
+                    then:
+                      - sequence: !input button_1_held
+                      - wait_for_trigger:
+                          - trigger: device
+                            device_id: !input zigbee_device
+                            domain: mqtt
+                            type: action
+                            subtype: release_1
+                        timeout:
+                          seconds: "{{ hold_max_duration }}"
+                        continue_on_timeout: true
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_1_released
+                    # Path B: repeating held actions
+                    else:
+                      - repeat:
+                          sequence:
+                            - sequence: !input button_1_held
+                            - wait_for_trigger:
+                                - trigger: device
+                                  device_id: !input zigbee_device
+                                  domain: mqtt
+                                  type: action
+                                  subtype: release_1
+                              timeout:
+                                milliseconds: "{{ hold_repeat_delay }}"
+                              continue_on_timeout: true
+                          until: >
+                            {{ wait.trigger is not none or
+                               repeat.index >= ((hold_max_duration * 1000) / hold_repeat_delay) | int }}
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_1_released
+
+      # ════════════════════════════════════════════════════════════════════════
+      # BUTTON 2
+      # ════════════════════════════════════════════════════════════════════════
+      - conditions: [{ condition: trigger, id: press_2 }]
+        sequence:
+          - wait_for_trigger:
+              - trigger: device
+                device_id: !input zigbee_device
+                domain: mqtt
+                type: action
+                subtype: release_2
+            timeout:
+              milliseconds: "{{ hold_delay }}"
+            continue_on_timeout: true
+          - choose:
+              - conditions: "{{ wait.trigger is not none }}"
+                sequence: !input button_2_pressed
+              - conditions: "{{ wait.trigger is none }}"
+                sequence:
+                  - if: "{{ hold_repeat_delay | int == 0 }}"
+                    then:
+                      - sequence: !input button_2_held
+                      - wait_for_trigger:
+                          - trigger: device
+                            device_id: !input zigbee_device
+                            domain: mqtt
+                            type: action
+                            subtype: release_2
+                        timeout:
+                          seconds: "{{ hold_max_duration }}"
+                        continue_on_timeout: true
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_2_released
+                    else:
+                      - repeat:
+                          sequence:
+                            - sequence: !input button_2_held
+                            - wait_for_trigger:
+                                - trigger: device
+                                  device_id: !input zigbee_device
+                                  domain: mqtt
+                                  type: action
+                                  subtype: release_2
+                              timeout:
+                                milliseconds: "{{ hold_repeat_delay }}"
+                              continue_on_timeout: true
+                          until: >
+                            {{ wait.trigger is not none or
+                               repeat.index >= ((hold_max_duration * 1000) / hold_repeat_delay) | int }}
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_2_released
+
+      # ════════════════════════════════════════════════════════════════════════
+      # BUTTON 3
+      # ════════════════════════════════════════════════════════════════════════
+      - conditions: [{ condition: trigger, id: press_3 }]
+        sequence:
+          - wait_for_trigger:
+              - trigger: device
+                device_id: !input zigbee_device
+                domain: mqtt
+                type: action
+                subtype: release_3
+            timeout:
+              milliseconds: "{{ hold_delay }}"
+            continue_on_timeout: true
+          - choose:
+              - conditions: "{{ wait.trigger is not none }}"
+                sequence: !input button_3_pressed
+              - conditions: "{{ wait.trigger is none }}"
+                sequence:
+                  - if: "{{ hold_repeat_delay | int == 0 }}"
+                    then:
+                      - sequence: !input button_3_held
+                      - wait_for_trigger:
+                          - trigger: device
+                            device_id: !input zigbee_device
+                            domain: mqtt
+                            type: action
+                            subtype: release_3
+                        timeout:
+                          seconds: "{{ hold_max_duration }}"
+                        continue_on_timeout: true
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_3_released
+                    else:
+                      - repeat:
+                          sequence:
+                            - sequence: !input button_3_held
+                            - wait_for_trigger:
+                                - trigger: device
+                                  device_id: !input zigbee_device
+                                  domain: mqtt
+                                  type: action
+                                  subtype: release_3
+                              timeout:
+                                milliseconds: "{{ hold_repeat_delay }}"
+                              continue_on_timeout: true
+                          until: >
+                            {{ wait.trigger is not none or
+                               repeat.index >= ((hold_max_duration * 1000) / hold_repeat_delay) | int }}
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_3_released
+
+      # ════════════════════════════════════════════════════════════════════════
+      # BUTTON 4
+      # ════════════════════════════════════════════════════════════════════════
+      - conditions: [{ condition: trigger, id: press_4 }]
+        sequence:
+          - wait_for_trigger:
+              - trigger: device
+                device_id: !input zigbee_device
+                domain: mqtt
+                type: action
+                subtype: release_4
+            timeout:
+              milliseconds: "{{ hold_delay }}"
+            continue_on_timeout: true
+          - choose:
+              - conditions: "{{ wait.trigger is not none }}"
+                sequence: !input button_4_pressed
+              - conditions: "{{ wait.trigger is none }}"
+                sequence:
+                  - if: "{{ hold_repeat_delay | int == 0 }}"
+                    then:
+                      - sequence: !input button_4_held
+                      - wait_for_trigger:
+                          - trigger: device
+                            device_id: !input zigbee_device
+                            domain: mqtt
+                            type: action
+                            subtype: release_4
+                        timeout:
+                          seconds: "{{ hold_max_duration }}"
+                        continue_on_timeout: true
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_4_released
+                    else:
+                      - repeat:
+                          sequence:
+                            - sequence: !input button_4_held
+                            - wait_for_trigger:
+                                - trigger: device
+                                  device_id: !input zigbee_device
+                                  domain: mqtt
+                                  type: action
+                                  subtype: release_4
+                              timeout:
+                                milliseconds: "{{ hold_repeat_delay }}"
+                              continue_on_timeout: true
+                          until: >
+                            {{ wait.trigger is not none or
+                               repeat.index >= ((hold_max_duration * 1000) / hold_repeat_delay) | int }}
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_4_released
+
+      # ════════════════════════════════════════════════════════════════════════
+      # BUTTONS 1 + 3
+      # ════════════════════════════════════════════════════════════════════════
+      - conditions: [{ condition: trigger, id: press_1_and_3 }]
+        sequence:
+          - wait_for_trigger:
+              - trigger: device
+                device_id: !input zigbee_device
+                domain: mqtt
+                type: action
+                subtype: release_1_and_3
+            timeout:
+              milliseconds: "{{ hold_delay }}"
+            continue_on_timeout: true
+          - choose:
+              - conditions: "{{ wait.trigger is not none }}"
+                sequence: !input button_1_and_3_pressed
+              - conditions: "{{ wait.trigger is none }}"
+                sequence:
+                  - if: "{{ hold_repeat_delay | int == 0 }}"
+                    then:
+                      - sequence: !input button_1_and_3_held
+                      - wait_for_trigger:
+                          - trigger: device
+                            device_id: !input zigbee_device
+                            domain: mqtt
+                            type: action
+                            subtype: release_1_and_3
+                        timeout:
+                          seconds: "{{ hold_max_duration }}"
+                        continue_on_timeout: true
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_1_and_3_released
+                    else:
+                      - repeat:
+                          sequence:
+                            - sequence: !input button_1_and_3_held
+                            - wait_for_trigger:
+                                - trigger: device
+                                  device_id: !input zigbee_device
+                                  domain: mqtt
+                                  type: action
+                                  subtype: release_1_and_3
+                              timeout:
+                                milliseconds: "{{ hold_repeat_delay }}"
+                              continue_on_timeout: true
+                          until: >
+                            {{ wait.trigger is not none or
+                               repeat.index >= ((hold_max_duration * 1000) / hold_repeat_delay) | int }}
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_1_and_3_released
+
+      # ════════════════════════════════════════════════════════════════════════
+      # BUTTONS 2 + 4
+      # ════════════════════════════════════════════════════════════════════════
+      - conditions: [{ condition: trigger, id: press_2_and_4 }]
+        sequence:
+          - wait_for_trigger:
+              - trigger: device
+                device_id: !input zigbee_device
+                domain: mqtt
+                type: action
+                subtype: release_2_and_4
+            timeout:
+              milliseconds: "{{ hold_delay }}"
+            continue_on_timeout: true
+          - choose:
+              - conditions: "{{ wait.trigger is not none }}"
+                sequence: !input button_2_and_4_pressed
+              - conditions: "{{ wait.trigger is none }}"
+                sequence:
+                  - if: "{{ hold_repeat_delay | int == 0 }}"
+                    then:
+                      - sequence: !input button_2_and_4_held
+                      - wait_for_trigger:
+                          - trigger: device
+                            device_id: !input zigbee_device
+                            domain: mqtt
+                            type: action
+                            subtype: release_2_and_4
+                        timeout:
+                          seconds: "{{ hold_max_duration }}"
+                        continue_on_timeout: true
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_2_and_4_released
+                    else:
+                      - repeat:
+                          sequence:
+                            - sequence: !input button_2_and_4_held
+                            - wait_for_trigger:
+                                - trigger: device
+                                  device_id: !input zigbee_device
+                                  domain: mqtt
+                                  type: action
+                                  subtype: release_2_and_4
+                              timeout:
+                                milliseconds: "{{ hold_repeat_delay }}"
+                              continue_on_timeout: true
+                          until: >
+                            {{ wait.trigger is not none or
+                               repeat.index >= ((hold_max_duration * 1000) / hold_repeat_delay) | int }}
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_2_and_4_released
+
+      # ════════════════════════════════════════════════════════════════════════
+      # BUTTONS 1 + 4
+      # ════════════════════════════════════════════════════════════════════════
+      - conditions: [{ condition: trigger, id: press_1_and_4 }]
+        sequence:
+          - wait_for_trigger:
+              - trigger: device
+                device_id: !input zigbee_device
+                domain: mqtt
+                type: action
+                subtype: release_1_and_4
+            timeout:
+              milliseconds: "{{ hold_delay }}"
+            continue_on_timeout: true
+          - choose:
+              - conditions: "{{ wait.trigger is not none }}"
+                sequence: !input button_1_and_4_pressed
+              - conditions: "{{ wait.trigger is none }}"
+                sequence:
+                  - if: "{{ hold_repeat_delay | int == 0 }}"
+                    then:
+                      - sequence: !input button_1_and_4_held
+                      - wait_for_trigger:
+                          - trigger: device
+                            device_id: !input zigbee_device
+                            domain: mqtt
+                            type: action
+                            subtype: release_1_and_4
+                        timeout:
+                          seconds: "{{ hold_max_duration }}"
+                        continue_on_timeout: true
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_1_and_4_released
+                    else:
+                      - repeat:
+                          sequence:
+                            - sequence: !input button_1_and_4_held
+                            - wait_for_trigger:
+                                - trigger: device
+                                  device_id: !input zigbee_device
+                                  domain: mqtt
+                                  type: action
+                                  subtype: release_1_and_4
+                              timeout:
+                                milliseconds: "{{ hold_repeat_delay }}"
+                              continue_on_timeout: true
+                          until: >
+                            {{ wait.trigger is not none or
+                               repeat.index >= ((hold_max_duration * 1000) / hold_repeat_delay) | int }}
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_1_and_4_released
+
+      # ════════════════════════════════════════════════════════════════════════
+      # BUTTONS 2 + 3
+      # ════════════════════════════════════════════════════════════════════════
+      - conditions: [{ condition: trigger, id: press_2_and_3 }]
+        sequence:
+          - wait_for_trigger:
+              - trigger: device
+                device_id: !input zigbee_device
+                domain: mqtt
+                type: action
+                subtype: release_2_and_3
+            timeout:
+              milliseconds: "{{ hold_delay }}"
+            continue_on_timeout: true
+          - choose:
+              - conditions: "{{ wait.trigger is not none }}"
+                sequence: !input button_2_and_3_pressed
+              - conditions: "{{ wait.trigger is none }}"
+                sequence:
+                  - if: "{{ hold_repeat_delay | int == 0 }}"
+                    then:
+                      - sequence: !input button_2_and_3_held
+                      - wait_for_trigger:
+                          - trigger: device
+                            device_id: !input zigbee_device
+                            domain: mqtt
+                            type: action
+                            subtype: release_2_and_3
+                        timeout:
+                          seconds: "{{ hold_max_duration }}"
+                        continue_on_timeout: true
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_2_and_3_released
+                    else:
+                      - repeat:
+                          sequence:
+                            - sequence: !input button_2_and_3_held
+                            - wait_for_trigger:
+                                - trigger: device
+                                  device_id: !input zigbee_device
+                                  domain: mqtt
+                                  type: action
+                                  subtype: release_2_and_3
+                              timeout:
+                                milliseconds: "{{ hold_repeat_delay }}"
+                              continue_on_timeout: true
+                          until: >
+                            {{ wait.trigger is not none or
+                               repeat.index >= ((hold_max_duration * 1000) / hold_repeat_delay) | int }}
+                      - if: "{{ wait.trigger is not none }}"
+                        then: !input button_2_and_3_released
